@@ -1,0 +1,25 @@
+{
+  "name": "gem-catalog",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "vite src/client",
+    "build:client": "vite build",
+    "build:server": "tsc -p tsconfig.server.json",
+    "build": "npm run build:client && npm run build:server && cp appsscript.json dist/",
+    "deploy": "npm run build && clasp push",
+    "clasp:login": "clasp login",
+    "clasp:push": "clasp push",
+    "clasp:open": "clasp open",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "@google/clasp": "^2.4.2",
+    "@types/google-apps-script": "^1.0.83",
+    "typescript": "^5.3.3",
+    "vite": "^5.0.10",
+    "vite-plugin-singlefile": "^2.0.0-beta.7",
+    "vitest": "^4.1.0"
+  }
+}
