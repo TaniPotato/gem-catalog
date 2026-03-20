@@ -16,7 +16,6 @@ interface Gem {
   votes: number
 }
 
-// GAS google.script.run types
 declare const google: {
   script: {
     run: {
@@ -24,6 +23,7 @@ declare const google: {
       withFailureHandler: (fn: (err: Error) => void) => typeof google.script.run
       getGems: () => void
       addGem: (data: object) => void
+      updateGem: (gemId: string, data: object) => void
       incrementVote: (gemId: string) => void
     }
   }
@@ -33,23 +33,85 @@ declare const google: {
 let allGems: Gem[] = []
 let currentTag = ''
 let currentSort: 'new' | 'popular' = 'new'
+let editingGemId: string | null = null
 
-// ===== DOM references =====
-const searchInput = document.getElementById('searchInput') as HTMLInputElement
-const tagFilters = document.getElementById('tagFilters') as HTMLDivElement
-const cardGrid = document.getElementById('cardGrid') as HTMLDivElement
-const loadingEl = document.getElementById('loading') as HTMLDivElement
-const emptyState = document.getElementById('emptyState') as HTMLDivElement
-const modalOverlay = document.getElementById('modalOverlay') as HTMLDivElement
-const openModalBtn = document.getElementById('openModalBtn') as HTMLButtonElement
-const closeModalBtn = document.getElementById('closeModalBtn') as HTMLButtonElement
-const cancelModalBtn = document.getElementById('cancelModalBtn') as HTMLButtonElement
-const registerForm = document.getElementById('registerForm') as HTMLFormElement
-const submitBtn = document.getElementById('submitBtn') as HTMLButtonElement
-const sortNewBtn = document.getElementById('sortNew') as HTMLButtonElement
-const sortPopularBtn = document.getElementById('sortPopular') as HTMLButtonElement
+// ===== DOM =====
+const searchInput   = document.getElementById('searchInput')    as HTMLInputElement
+const tagFilters    = document.getElementById('tagFilters')     as HTMLDivElement
+const cardGrid      = document.getElementById('cardGrid')       as HTMLDivElement
+const loadingEl     = document.getElementById('loading')        as HTMLDivElement
+const emptyState    = document.getElementById('emptyState')     as HTMLDivElement
+const sectionCount  = document.getElementById('sectionCount')   as HTMLSpanElement
+const modalOverlay  = document.getElementById('modalOverlay')   as HTMLDivElement
+const modalTitle    = document.getElementById('modalTitle')     as HTMLHeadingElement
+const openModalBtn  = document.getElementById('openModalBtn')   as HTMLButtonElement
+const closeModalBtn = document.getElementById('closeModalBtn')  as HTMLButtonElement
+const cancelModalBtn= document.getElementById('cancelModalBtn') as HTMLButtonElement
+const registerForm  = document.getElementById('registerForm')   as HTMLFormElement
+const submitBtn     = document.getElementById('submitBtn')      as HTMLButtonElement
+const sortNewBtn    = document.getElementById('sortNew')        as HTMLButtonElement
+const sortPopularBtn= document.getElementById('sortPopular')    as HTMLButtonElement
 
-// ===== LocalStorage helpers =====
+// ===== TagInput =====
+class TagInput {
+  private tags: string[] = []
+  private chips = document.getElementById('tagChips')!
+  private textInput = document.getElementById('tagTextInput') as HTMLInputElement
+  private hidden = document.getElementById('gemTags') as HTMLInputElement
+  private field = document.getElementById('tagInputField')!
+
+  constructor() {
+    this.field.addEventListener('click', () => this.textInput.focus())
+    this.textInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ',') {
+        e.preventDefault()
+        this.addTag(this.textInput.value)
+      }
+      if (e.key === 'Backspace' && this.textInput.value === '' && this.tags.length) {
+        this.removeTag(this.tags[this.tags.length - 1])
+      }
+    })
+  }
+
+  addTag(raw: string): void {
+    const tag = raw.trim().replace(/,$/, '')
+    if (!tag || this.tags.includes(tag)) { this.textInput.value = ''; return }
+    this.tags.push(tag)
+    this.textInput.value = ''
+    this.render()
+  }
+
+  removeTag(tag: string): void {
+    this.tags = this.tags.filter(t => t !== tag)
+    this.render()
+  }
+
+  setTags(tags: string[]): void {
+    this.tags = [...tags]
+    this.textInput.value = ''
+    this.render()
+  }
+
+  getValue(): string {
+    return this.tags.join(',')
+  }
+
+  private render(): void {
+    this.chips.innerHTML = ''
+    this.tags.forEach(tag => {
+      const chip = document.createElement('span')
+      chip.className = 'tag-chip'
+      chip.innerHTML = `${escapeHtml(tag)}<button type="button" class="tag-chip-remove" aria-label="削除">✕</button>`
+      chip.querySelector('button')!.addEventListener('click', () => this.removeTag(tag))
+      this.chips.appendChild(chip)
+    })
+    this.hidden.value = this.getValue()
+  }
+}
+
+const tagInput = new TagInput()
+
+// ===== LocalStorage =====
 function isVoted(gemId: string): boolean {
   return localStorage.getItem(`voted_${gemId}`) === '1'
 }
@@ -63,7 +125,7 @@ function renderTagFilters(gems: Gem[]): void {
   gems.forEach(g => g.tags.forEach(t => tagSet.add(t)))
   const tags = Array.from(tagSet).sort()
 
-  tagFilters.innerHTML = `<button class="tag-btn ${currentTag === '' ? 'active' : ''}" data-tag="">全て</button>`
+  tagFilters.innerHTML = `<button class="tag-btn ${currentTag === '' ? 'active' : ''}" data-tag="">すべて</button>`
   tags.forEach(tag => {
     const btn = document.createElement('button')
     btn.className = `tag-btn${currentTag === tag ? ' active' : ''}`
@@ -86,17 +148,16 @@ function filterAndSort(gems: Gem[]): Gem[] {
   if (currentTag) {
     result = result.filter(g => g.tags.includes(currentTag))
   }
-  if (currentSort === 'popular') {
-    result = [...result].sort((a, b) => b.votes - a.votes)
-  } else {
-    result = [...result].sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-  }
-  return result
+  return currentSort === 'popular'
+    ? [...result].sort((a, b) => b.votes - a.votes)
+    : [...result].sort((a, b) => b.createdAt.localeCompare(a.createdAt))
 }
 
 function renderCards(gems: Gem[]): void {
   cardGrid.innerHTML = ''
+  cardGrid.appendChild(emptyState)
   emptyState.hidden = gems.length > 0
+  sectionCount.textContent = gems.length > 0 ? `${gems.length} 件` : ''
 
   gems.forEach(gem => {
     const voted = isVoted(gem.id)
@@ -105,21 +166,19 @@ function renderCards(gems: Gem[]): void {
     card.dataset.id = gem.id
     card.innerHTML = `
       <div class="card-top">
-        <span class="card-name">🤖 ${escapeHtml(gem.name)}</span>
-        <span class="card-votes">👍 ${gem.votes}</span>
+        <span class="card-name">${escapeHtml(gem.name)}</span>
+        <span class="card-votes-badge">👍 ${gem.votes}</span>
       </div>
-      <p class="card-description">${escapeHtml(gem.description || '')}</p>
-      <div class="card-tags">
-        ${gem.tags.map(t => `<span class="card-tag">#${escapeHtml(t)}</span>`).join('')}
-      </div>
+      ${gem.description ? `<p class="card-description">${escapeHtml(gem.description)}</p>` : ''}
+      ${gem.tags.length ? `<div class="card-tags">${gem.tags.map(t => `<span class="card-tag">${escapeHtml(t)}</span>`).join('')}</div>` : ''}
       <div class="card-footer">
-        <span class="card-author">登録者：${escapeHtml(gem.author)}</span>
+        <span class="card-author">${escapeHtml(gem.author)}</span>
         <div class="card-actions">
           <button
             class="btn-vote${voted ? ' voted' : ''}"
             data-id="${gem.id}"
             ${voted ? 'disabled' : ''}
-          >${voted ? '✓ 投票済み' : '👍 便利！'}</button>
+          >${voted ? '✓ 済み' : '👍 便利！'}</button>
           <a href="${escapeHtml(gem.url)}" target="_blank" rel="noopener noreferrer" class="btn-open">開く →</a>
         </div>
       </div>
@@ -136,7 +195,7 @@ function escapeHtml(str: string): string {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 }
 
-// ===== Load Gems =====
+// ===== Load =====
 function loadGems(): void {
   loadingEl.hidden = false
   cardGrid.innerHTML = ''
@@ -184,58 +243,91 @@ sortPopularBtn.addEventListener('click', () => {
 
 // ===== Vote =====
 cardGrid.addEventListener('click', (e) => {
-  const btn = (e.target as HTMLElement).closest('.btn-vote') as HTMLButtonElement | null
-  if (!btn || btn.disabled) return
+  const target = e.target as HTMLElement
 
-  const gemId = btn.dataset.id!
-  btn.disabled = true
-  btn.textContent = '...'
+  // 👍 ボタン
+  const voteBtn = target.closest('.btn-vote') as HTMLButtonElement | null
+  if (voteBtn) {
+    if (voteBtn.disabled) return
+    const gemId = voteBtn.dataset.id!
+    voteBtn.disabled = true
+    voteBtn.textContent = '...'
 
-  google.script.run
-    .withSuccessHandler((result: unknown) => {
-      const res = result as { success: boolean; votes: number }
-      if (res.success) {
-        markVoted(gemId)
-        const card = cardGrid.querySelector(`.gem-card[data-id="${gemId}"]`)
-        if (card) {
-          const votesEl = card.querySelector('.card-votes')!
-          votesEl.textContent = `👍 ${res.votes}`
-          const gem = allGems.find(g => g.id === gemId)
-          if (gem) gem.votes = res.votes
+    google.script.run
+      .withSuccessHandler((result: unknown) => {
+        const res = result as { success: boolean; votes: number }
+        if (res.success) {
+          markVoted(gemId)
+          const card = cardGrid.querySelector(`.gem-card[data-id="${gemId}"]`)
+          if (card) {
+            card.querySelector('.card-votes-badge')!.textContent = `👍 ${res.votes}`
+            const gem = allGems.find(g => g.id === gemId)
+            if (gem) gem.votes = res.votes
+          }
+          voteBtn.textContent = '✓ 済み'
+          voteBtn.classList.add('voted')
+        } else {
+          voteBtn.disabled = false
+          voteBtn.textContent = '👍 便利！'
         }
-        btn.textContent = '✓ 投票済み'
-        btn.classList.add('voted')
-      } else {
-        btn.disabled = false
-        btn.textContent = '👍 便利！'
-      }
-    })
-    .withFailureHandler(() => {
-      btn.disabled = false
-      btn.textContent = '👍 便利！'
-    })
-    .incrementVote(gemId)
+      })
+      .withFailureHandler(() => {
+        voteBtn.disabled = false
+        voteBtn.textContent = '👍 便利！'
+      })
+      .incrementVote(gemId)
+    return
+  }
+
+  // 「開く」リンクはそのまま
+  if (target.closest('.btn-open')) return
+
+  // カードクリック → 編集モーダル
+  const card = target.closest('.gem-card') as HTMLElement | null
+  if (!card) return
+  const gemId = card.dataset.id!
+  const gem = allGems.find(g => g.id === gemId)
+  if (gem) openModal(gem)
 })
 
 // ===== Modal =====
-function openModal(): void {
+function fillForm(gem?: Gem): void {
+  const name        = document.getElementById('gemName')        as HTMLInputElement
+  const description = document.getElementById('gemDescription') as HTMLTextAreaElement
+  const url         = document.getElementById('gemUrl')         as HTMLInputElement
+  const author      = document.getElementById('gemAuthor')      as HTMLInputElement
+
+  name.value        = gem?.name        ?? ''
+  description.value = gem?.description ?? ''
+  url.value         = gem?.url         ?? ''
+  author.value      = gem?.author      ?? ''
+  tagInput.setTags(gem?.tags ?? [])
+}
+
+function openModal(gem?: Gem): void {
+  editingGemId = gem?.id ?? null
+  modalTitle.textContent = gem ? 'Gemを編集' : '新しいGemを登録'
+  submitBtn.textContent  = gem ? '保存する'  : '登録する'
+  fillForm(gem)
+  clearErrors()
   modalOverlay.hidden = false
   ;(document.getElementById('gemName') as HTMLInputElement).focus()
 }
+
 function closeModal(): void {
   modalOverlay.hidden = true
+  editingGemId = null
   registerForm.reset()
+  tagInput.setTags([])
   clearErrors()
 }
 
-openModalBtn.addEventListener('click', openModal)
+openModalBtn.addEventListener('click',  () => openModal())
 closeModalBtn.addEventListener('click', closeModal)
 cancelModalBtn.addEventListener('click', closeModal)
-modalOverlay.addEventListener('click', (e) => {
-  if (e.target === modalOverlay) closeModal()
-})
+modalOverlay.addEventListener('click', (e) => { if (e.target === modalOverlay) closeModal() })
 
-// ===== Form validation =====
+// ===== Validation =====
 function clearErrors(): void {
   ;['gemName', 'gemUrl', 'gemAuthor'].forEach(field => {
     const input = document.getElementById(field) as HTMLInputElement
@@ -248,23 +340,15 @@ function clearErrors(): void {
 function validate(): boolean {
   clearErrors()
   let valid = true
-
-  const name = document.getElementById('gemName') as HTMLInputElement
-  const url = document.getElementById('gemUrl') as HTMLInputElement
-  const author = document.getElementById('gemAuthor') as HTMLInputElement
-
-  if (!name.value.trim()) {
-    showError('gemName', 'Gem名は必須です')
-    valid = false
-  }
-  if (!url.value.trim()) {
-    showError('gemUrl', 'URLは必須です')
-    valid = false
-  }
-  if (!author.value.trim()) {
-    showError('gemAuthor', '作成者は必須です')
-    valid = false
-  }
+  const checks: [string, string][] = [
+    ['gemName',   'Gem名は必須です'],
+    ['gemUrl',    'URLは必須です'],
+    ['gemAuthor', '作成者は必須です'],
+  ]
+  checks.forEach(([id, msg]) => {
+    const input = document.getElementById(id) as HTMLInputElement
+    if (!input.value.trim()) { showError(id, msg); valid = false }
+  })
   return valid
 }
 
@@ -275,35 +359,45 @@ function showError(fieldId: string, msg: string): void {
   error.textContent = msg
 }
 
-// ===== Register =====
+// ===== Submit (register / edit) =====
 registerForm.addEventListener('submit', (e) => {
   e.preventDefault()
   if (!validate()) return
 
   submitBtn.disabled = true
-  submitBtn.textContent = '登録中...'
+  submitBtn.textContent = '送信中...'
 
   const data = {
-    name: (document.getElementById('gemName') as HTMLInputElement).value.trim(),
+    name:        (document.getElementById('gemName')        as HTMLInputElement).value.trim(),
     description: (document.getElementById('gemDescription') as HTMLTextAreaElement).value.trim(),
-    url: (document.getElementById('gemUrl') as HTMLInputElement).value.trim(),
-    tags: (document.getElementById('gemTags') as HTMLInputElement).value.trim(),
-    author: (document.getElementById('gemAuthor') as HTMLInputElement).value.trim(),
+    url:         (document.getElementById('gemUrl')         as HTMLInputElement).value.trim(),
+    tags:        tagInput.getValue(),
+    author:      (document.getElementById('gemAuthor')      as HTMLInputElement).value.trim(),
   }
 
-  google.script.run
-    .withSuccessHandler(() => {
-      submitBtn.disabled = false
-      submitBtn.textContent = '登録する ✓'
-      closeModal()
-      loadGems()
-    })
-    .withFailureHandler(() => {
-      submitBtn.disabled = false
-      submitBtn.textContent = '登録する ✓'
-      alert('登録に失敗しました。もう一度お試しください。')
-    })
-    .addGem(data)
+  const onSuccess = () => {
+    submitBtn.disabled = false
+    submitBtn.textContent = editingGemId ? '保存する' : '登録する'
+    closeModal()
+    loadGems()
+  }
+  const onFailure = () => {
+    submitBtn.disabled = false
+    submitBtn.textContent = editingGemId ? '保存する' : '登録する'
+    alert('送信に失敗しました。もう一度お試しください。')
+  }
+
+  if (editingGemId) {
+    google.script.run
+      .withSuccessHandler(onSuccess)
+      .withFailureHandler(onFailure)
+      .updateGem(editingGemId, data)
+  } else {
+    google.script.run
+      .withSuccessHandler(onSuccess)
+      .withFailureHandler(onFailure)
+      .addGem(data)
+  }
 })
 
 // ===== Init =====

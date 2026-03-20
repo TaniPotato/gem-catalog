@@ -80,6 +80,19 @@ function makeRunner(successHandler: (v: unknown) => void, failureHandler: (e: Er
       save(gems)
       successHandler({ success: true, id })
     },
+    updateGem: async (gemId: string, data: { name: string; description: string; url: string; tags: string; author: string }) => {
+      await delay()
+      const gems = load()
+      const gem = gems.find((g) => g.id === gemId)
+      if (!gem) { failureHandler(new Error('Gem not found')); return }
+      gem.name = data.name
+      gem.description = data.description
+      gem.url = data.url
+      gem.tags = data.tags ? data.tags.split(',').map((t) => t.trim()).filter(Boolean) : []
+      gem.author = data.author
+      save(gems)
+      successHandler({ success: true })
+    },
     incrementVote: async (gemId: string) => {
       await delay()
       const gems = load()

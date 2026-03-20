@@ -58,6 +58,35 @@ export function addGem(data: {
   }
 }
 
+export function updateGem(gemId: string, data: {
+  name: string
+  description: string
+  url: string
+  tags: string
+  author: string
+}): object {
+  const lock = LockService.getScriptLock()
+  lock.waitLock(10000)
+
+  try {
+    const sheet = getSheet()
+    const lastRow = sheet.getLastRow()
+    if (lastRow < 1) return { success: false, error: 'Gem not found' }
+
+    const ids = sheet.getRange(1, 1, lastRow, 1).getValues()
+    const rowIndex = ids.findIndex((r) => r[0] === gemId)
+    if (rowIndex === -1) return { success: false, error: 'Gem not found' }
+
+    const targetRow = rowIndex + 1
+    sheet.getRange(targetRow, 2, 1, 5).setValues([[
+      data.name, data.description, data.url, data.tags, data.author,
+    ]])
+    return { success: true }
+  } finally {
+    lock.releaseLock()
+  }
+}
+
 export function incrementVote(gemId: string): object {
   const lock = LockService.getScriptLock()
   lock.waitLock(10000)
