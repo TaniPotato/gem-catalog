@@ -12,7 +12,8 @@
     "clasp:push": "clasp push",
     "clasp:open": "clasp open",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "lint": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit"
   },
   "devDependencies": {
     "@google/clasp": "^2.4.2",
