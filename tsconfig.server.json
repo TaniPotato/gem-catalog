@@ -9,5 +9,6 @@
     "skipLibCheck": true,
     "types": ["google-apps-script"]
   },
-  "include": ["src/server/**/*.ts"]
+  "include": ["src/server/**/*.ts"],
+  "exclude": ["src/server/__tests__/**"]
 }

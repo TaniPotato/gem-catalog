@@ -22,16 +22,26 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install clasp globally
+        run: npm install -g @google/clasp
+
       - name: Build
         run: npm run build
 
-      - name: Setup clasp credentials
+      - name: Restore clasp credentials
         env:
           CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
           CLASP_JSON: ${{ secrets.CLASP_JSON }}
         run: |
-          echo "$CLASPRC_JSON" > ~/.clasprc.json
+          echo "$CLASPRC_JSON" > "$HOME/.clasprc.json"
+          echo "$CLASPRC_JSON" > .clasprc.json
           echo "$CLASP_JSON" > .clasp.json
+          ls -la "$HOME/.clasprc.json" .clasprc.json .clasp.json
 
       - name: Deploy to GAS
-        run: npx clasp push
+        env:
+          DEPLOYMENT_ID: ${{ secrets.GAS_DEPLOYMENT_ID }}
+        run: |
+          clasp push
+          clasp version "deploy from GitHub Actions"
+          clasp deploy --deploymentId "$DEPLOYMENT_ID" -d "Production"
