@@ -93,6 +93,15 @@ function makeRunner(successHandler: (v: unknown) => void, failureHandler: (e: Er
       save(gems)
       successHandler({ success: true })
     },
+    decrementVote: async (gemId: string) => {
+      await delay()
+      const gems = load()
+      const gem = gems.find((g) => g.id === gemId)
+      if (!gem) { failureHandler(new Error('Gem not found')); return }
+      gem.votes = Math.max(0, gem.votes - 1)
+      save(gems)
+      successHandler({ success: true, votes: gem.votes })
+    },
     incrementVote: async (gemId: string) => {
       await delay()
       const gems = load()

@@ -354,32 +354,58 @@ body {
 .btn-secondary:hover { background: var(--outline-subtle); }
 
 .btn-vote {
+  position: relative;
   padding: 6px 14px;
   border-radius: var(--r-sm);
   border: 1.5px solid var(--outline);
-  background: var(--surface);
+  background: transparent;
   color: var(--text-secondary);
   font-size: 0.8125rem;
   font-weight: 600;
   cursor: pointer;
-  transition: all .15s ease;
+  transition: background .15s;
   font-family: inherit;
+  overflow: visible;
 }
 .btn-vote:hover:not(:disabled) {
-  border-color: var(--primary);
-  color: var(--primary);
-  background: var(--primary-container);
+  background: var(--surface-high);
 }
 .btn-vote:disabled {
-  border-color: var(--outline-subtle);
-  color: var(--text-tertiary);
-  background: var(--surface-high);
-  cursor: not-allowed;
+  opacity: .5;
+  cursor: wait;
 }
 .btn-vote.voted {
-  border-color: var(--success);
-  color: var(--success);
-  background: #F0FFF4;
+  border-color: var(--primary);
+  background: var(--primary);
+  color: #fff;
+}
+.btn-vote.voted:hover:not(:disabled) {
+  background: var(--primary-hover);
+}
+
+/* ===== Vote Animation ===== */
+@keyframes vote-pop {
+  0%   { transform: scale(1); }
+  35%  { transform: scale(1.22); }
+  65%  { transform: scale(0.94); }
+  100% { transform: scale(1); }
+}
+@keyframes particle-fly {
+  0%   { transform: translate(-50%, -50%) scale(1); opacity: .9; }
+  100% { transform: translate(calc(-50% + var(--tx)), calc(-50% + var(--ty))) scale(0); opacity: 0; }
+}
+.btn-vote.vote-animating {
+  animation: vote-pop .3s cubic-bezier(.34, 1.4, .64, 1) forwards;
+}
+.vote-particle {
+  position: fixed;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--primary);
+  pointer-events: none;
+  z-index: 9999;
+  animation: particle-fly .38s ease-out forwards;
 }
 
 .btn-open {

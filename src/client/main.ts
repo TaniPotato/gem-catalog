@@ -1,3 +1,6 @@
+/// <reference types="vite/client" />
+export {}
+
 // ===== Dev mock =====
 if (import.meta.env.DEV) {
   const { setupMockGas } = await import('./mock-gas')
@@ -25,6 +28,7 @@ declare const google: {
       addGem: (data: object) => void
       updateGem: (gemId: string, data: object) => void
       incrementVote: (gemId: string) => void
+      decrementVote: (gemId: string) => void
     }
   }
 }
@@ -118,6 +122,9 @@ function isVoted(gemId: string): boolean {
 function markVoted(gemId: string): void {
   localStorage.setItem(`voted_${gemId}`, '1')
 }
+function unmarkVoted(gemId: string): void {
+  localStorage.removeItem(`voted_${gemId}`)
+}
 
 // ===== Render =====
 function renderTagFilters(gems: Gem[]): void {
@@ -167,7 +174,6 @@ function renderCards(gems: Gem[]): void {
     card.innerHTML = `
       <div class="card-top">
         <span class="card-name">${escapeHtml(gem.name)}</span>
-        <span class="card-votes-badge">👍 ${gem.votes}</span>
       </div>
       ${gem.description ? `<p class="card-description">${escapeHtml(gem.description)}</p>` : ''}
       ${gem.tags.length ? `<div class="card-tags">${gem.tags.map(t => `<span class="card-tag">${escapeHtml(t)}</span>`).join('')}</div>` : ''}
@@ -177,8 +183,7 @@ function renderCards(gems: Gem[]): void {
           <button
             class="btn-vote${voted ? ' voted' : ''}"
             data-id="${gem.id}"
-            ${voted ? 'disabled' : ''}
-          >${voted ? '✓ 済み' : '👍 便利！'}</button>
+          >👍 <span class="vote-count">${gem.votes}</span></button>
           <a href="${escapeHtml(gem.url)}" target="_blank" rel="noopener noreferrer" class="btn-open">開く →</a>
         </div>
       </div>
@@ -189,6 +194,35 @@ function renderCards(gems: Gem[]): void {
 
 function refresh(): void {
   renderCards(filterAndSort(allGems))
+}
+
+function triggerVoteAnimation(btn: HTMLButtonElement): void {
+  btn.classList.remove('vote-animating')
+  // reflow して再アニメーション可能にする
+  void btn.offsetWidth
+  btn.classList.add('vote-animating')
+  btn.addEventListener('animationend', () => btn.classList.remove('vote-animating'), { once: true })
+
+  // パーティクル爆発
+  const rect = btn.getBoundingClientRect()
+  const cx = rect.left + rect.width / 2
+  const cy = rect.top + rect.height / 2
+  const count = 6
+  for (let i = 0; i < count; i++) {
+    const p = document.createElement('div')
+    p.className = 'vote-particle'
+    const angle = (i / count) * Math.PI * 2 - Math.PI / 2
+    const dist = 16 + Math.random() * 10
+    p.style.left = `${cx}px`
+    p.style.top  = `${cy}px`
+    p.style.setProperty('--tx', `${Math.cos(angle) * dist}px`)
+    p.style.setProperty('--ty', `${Math.sin(angle) * dist}px`)
+    if (btn.classList.contains('voted')) {
+      p.style.background = 'var(--primary)'
+    }
+    document.body.appendChild(p)
+    p.addEventListener('animationend', () => p.remove(), { once: true })
+  }
 }
 
 function escapeHtml(str: string): string {
@@ -248,34 +282,41 @@ cardGrid.addEventListener('click', (e) => {
   // 👍 ボタン
   const voteBtn = target.closest('.btn-vote') as HTMLButtonElement | null
   if (voteBtn) {
-    if (voteBtn.disabled) return
     const gemId = voteBtn.dataset.id!
-    voteBtn.disabled = true
-    voteBtn.textContent = '...'
+    const wasVoted = isVoted(gemId)
 
+    // オプティミスティック更新 — サーバー応答を待たず即座に反映
+    triggerVoteAnimation(voteBtn)
+    const gem = allGems.find(g => g.id === gemId)
+    if (wasVoted) {
+      unmarkVoted(gemId)
+      voteBtn.classList.remove('voted')
+      if (gem) gem.votes = Math.max(0, gem.votes - 1)
+    } else {
+      markVoted(gemId)
+      voteBtn.classList.add('voted')
+      if (gem) gem.votes += 1
+    }
+    const badge = cardGrid.querySelector(`.gem-card[data-id="${gemId}"] .vote-count`)
+    if (badge && gem) badge.textContent = String(gem.votes)
+
+    // バックグラウンドでサーバー同期（失敗時はロールバック）
     google.script.run
       .withSuccessHandler((result: unknown) => {
         const res = result as { success: boolean; votes: number }
-        if (res.success) {
-          markVoted(gemId)
-          const card = cardGrid.querySelector(`.gem-card[data-id="${gemId}"]`)
-          if (card) {
-            card.querySelector('.card-votes-badge')!.textContent = `👍 ${res.votes}`
-            const gem = allGems.find(g => g.id === gemId)
-            if (gem) gem.votes = res.votes
-          }
-          voteBtn.textContent = '✓ 済み'
-          voteBtn.classList.add('voted')
-        } else {
-          voteBtn.disabled = false
-          voteBtn.textContent = '👍 便利！'
+        if (res.success && badge && gem) {
+          gem.votes = res.votes
+          badge.textContent = String(res.votes)
         }
       })
       .withFailureHandler(() => {
-        voteBtn.disabled = false
-        voteBtn.textContent = '👍 便利！'
+        // ロールバック
+        if (wasVoted) { markVoted(gemId); voteBtn.classList.add('voted') }
+        else { unmarkVoted(gemId); voteBtn.classList.remove('voted') }
+        if (gem) gem.votes += wasVoted ? 1 : -1
+        if (badge && gem) badge.textContent = String(gem.votes)
       })
-      .incrementVote(gemId)
+      [wasVoted ? 'decrementVote' : 'incrementVote'](gemId)
     return
   }
 

@@ -87,7 +87,7 @@ export function updateGem(gemId: string, data: {
   }
 }
 
-export function incrementVote(gemId: string): object {
+function changeVote(gemId: string, delta: 1 | -1): object {
   const lock = LockService.getScriptLock()
   lock.waitLock(10000)
 
@@ -100,13 +100,19 @@ export function incrementVote(gemId: string): object {
     const rowIndex = ids.findIndex((r) => r[0] === gemId)
     if (rowIndex === -1) return { success: false, error: 'Gem not found' }
 
-    const targetRow = rowIndex + 1
-    const cell = sheet.getRange(targetRow, 8)
-    const current = Number(cell.getValue()) || 0
-    const newCount = current + 1
+    const cell = sheet.getRange(rowIndex + 1, 8)
+    const newCount = Math.max(0, (Number(cell.getValue()) || 0) + delta)
     cell.setValue(newCount)
     return { success: true, votes: newCount }
   } finally {
     lock.releaseLock()
   }
+}
+
+export function incrementVote(gemId: string): object {
+  return changeVote(gemId, 1)
+}
+
+export function decrementVote(gemId: string): object {
+  return changeVote(gemId, -1)
 }
